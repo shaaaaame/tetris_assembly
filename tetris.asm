@@ -240,12 +240,12 @@ m_draw_tetromino:   # draw L tetromino
 # PART A
 keyboard_input:
     lw $a0, 4($t0)                  # Load second word from keyboard
-    li $v0, 1                       # ask system to print $a0
-    syscall
+
     beq $a0, 0x61, respond_to_A     # Check if the key a was pressed
     beq $a0, 0x73, respond_to_S
     beq $a0, 0x77, respond_to_W 
     beq $a0, 0x64, respond_to_D  
+    beq $a0, 0x71, respond_to_Q
 
 respond_to_A:
     lw $t1 ADDR_TET     # load current tetromino address
@@ -276,6 +276,12 @@ respond_to_D:
     sw $t1 ADDR_TET
     b game_loop
     
+respond_to_Q:
+    li $v0, 10                      # Quit gracefully
+	syscall
+    
+##################
+# PLACE SPRITES IN MEMORY
 store_tetromino_sprites:
     # hard code store L rotation 0
     lw $t0 ADDR_TET_SPRITE
@@ -332,3 +338,4 @@ store_tetromino_sprites:
     li $t1 0xffffff
     sw $t1 16($t0) 
     jr $ra
+    
