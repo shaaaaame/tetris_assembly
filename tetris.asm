@@ -22,17 +22,28 @@ ADDR_DSPL:
 ADDR_KBRD:
     .word 0xffff0000
     
+# Address of tetronominoes that have been placed. 
+# Simulates the display.
+# DSPL + 65536
+ADDR_TET_BOARD: 
+    .word 0x10018000
+    
+ADDR_DSPL_TOP:
+    .word 0x1000810C
+
 ##############################################################################
 # Mutable Data
 ##############################################################################
 # Address of current tetromino location on bitmap
 ADDR_TET:
-    .word 0x1000810c
+    .word 0x1000819C
     
 # Address of current tetromino "sprite"
 # Sprite stored as values to add to tetromino location to draw pixels.
-# E.g, drawing a straight horizontal 3 pixel line would be stored as 4, 4, 4.
+# E.g, drawing a straight horizontal 3 pixel line would be stored as 4, 4, 4, 0xffffff.
 # When reading, go to next memory location until value is 0xffffff, indicating end.
+# then, the next memory location indicates THE SPACE AFTER the lowest point, used for checking collisions.
+
 ADDR_TET_SPRITE:
     .word 0x20000000
     
@@ -54,12 +65,17 @@ main:
     # Initialize the game
     jal m_draw_scene
     
+    # set initial tetromino location
     lw $a0 ADDR_TET     # initialize tetromino location
-    sw $zero ADDR_TET_ORI
+    sw $zero ADDR_TET_ORI   # store current tetromino orientation in 0x3000000
     jal store_tetromino_sprites
-    # store current tetromino location in 0x20008000
+    
+    # draw initial tetromino
     lw $a0 ADDR_TET 
+    li $a1 0xAA336A # color pink
     jal m_draw_tetromino
+    
+    
 
 
 game_loop:	
@@ -70,7 +86,6 @@ game_loop:
     # 1b. Check which key has been pressed
     beq $t8, 1, keyboard_input      # If first word 1, key is pressed
 	
-    
     # 2a. Check for collisions
 	# 2b. Update locations (paddle, ball)
 	
@@ -78,7 +93,10 @@ game_loop:
 	jal m_draw_scene
 	
 	lw $a0 ADDR_TET
+	li $a1 0xAA336A # color pink
     jal m_draw_tetromino
+    
+    jal place_stored_tetrominoes
     
 	# 4. Sleep
     li 		$v0, 32
@@ -204,20 +222,18 @@ draw_checkers2:
 #########################
 # PART C
 # assume position at $a0
-
+# assume colour in $a1
+# draw a new tetromino
 m_draw_tetromino:   # draw L tetromino
     lw $t2 ADDR_TET_SPRITE
     lw $t3 ADDR_TET_ORI
-    li $t0 0xAA336A # color pink
     add $t1 $a0 $zero   # initialize brush location
-    
-   
     add $t4 $zero $zero
     
     # get memory location of correct orientation
     get_sprite_location:
         beq $t4 $t3 draw_sprite
-        addi $t2 $t2 32
+        addi $t2 $t2 64
         addi $t4 $t4 1
         bne $t4 $t3 get_sprite_location
         beq $t4 $t3 draw_sprite
@@ -226,7 +242,7 @@ m_draw_tetromino:   # draw L tetromino
         lw $t5 0($t2)   # get value to move brush
     draw_sprite_loop:
         add $t1 $t1 $t5 # add value to current brush location
-        sw $t0 0($t1)   # draw
+        sw $a1 0($t1)   # draw
         lw $t5 0($t2)   # get value to move brush
         addi $t2 $t2 4
         bne $t5 0xffffff draw_sprite_loop
@@ -241,7 +257,7 @@ m_draw_tetromino:   # draw L tetromino
 keyboard_input:
     lw $a0, 4($t0)                  # Load second word from keyboard
 
-    beq $a0, 0x61, respond_to_A     # Check if the key a was pressed
+    beq $a0, 0x61, respond_to_A     # Check if the key A was pressed
     beq $a0, 0x73, respond_to_S
     beq $a0, 0x77, respond_to_W 
     beq $a0, 0x64, respond_to_D  
@@ -249,29 +265,57 @@ keyboard_input:
 
 respond_to_A:
     lw $t1 ADDR_TET     # load current tetromino address
-    addi $t2 $zero 4    # move 
-    sub $t1 $t1 $t2
+    addi $a0 $t1 -4     # run collision check
+    lw $a1 ADDR_TET_ORI
+    jal check_collision
+    lw $t1 ADDR_TET     # load current tetromino address
+    beq $v0 1 game_loop
+    addi $t1 $t1 -4    # move 
     sw $t1 ADDR_TET     # store tetromino address
     b game_loop       # return to game loop
 
 respond_to_S:
     lw $t1 ADDR_TET
+    addi $a0 $t1 64    # run collision check
+    lw $a1 ADDR_TET_ORI
+    jal check_collision
+    lw $t1 ADDR_TET     # load current tetromino address
+    beq $v0 1 game_loop
     addi $t1 $t1 64
     sw $t1 ADDR_TET
+    add $a0 $t1 $zero  # run touch check
+    jal check_bottom_touching
+    beq $v0 1 handle_placement
     b game_loop
+    handle_placement:
+        jal place_tetronomino
+        jal reset_position
+        b game_loop
 
 respond_to_W:
+    lw $t1 ADDR_TET
     lw $t2 ADDR_TET_ORI
     addi $t2 $t2 1
     beq $t2 4 reset_ori     # if orientation = 4, want to reset to 0
-    sw $t2 ADDR_TET_ORI 
-    b game_loop
+    store_ori:
+        add $a0 $t1 $zero   # tetris location
+        add $a1 $t2 $zero   # orientation number
+        jal check_collision # check if rotation causes collision
+        beq $v0 1 game_loop # if collide, return to game loop.
+        sw $a1 ADDR_TET_ORI 
+        b game_loop
     reset_ori:
-        sw $zero ADDR_TET_ORI 
+        add $t2 $zero $zero
+        b store_ori
     b game_loop
 
 respond_to_D:
     lw $t1 ADDR_TET
+    addi $a0 $t1 4     # run collision check
+    lw $a1 ADDR_TET_ORI
+    jal check_collision
+    lw $t1 ADDR_TET     # load current tetromino address
+    beq $v0 1 game_loop
     addi $t1 $t1 4
     sw $t1 ADDR_TET
     b game_loop
@@ -295,10 +339,16 @@ store_tetromino_sprites:
     sw $t1 12($t0) 
     li $t1 0xffffff
     sw $t1 16($t0) 
+    li $t1 192
+    sw $t1 20($t0) 
+    li $t1 196
+    sw $t1 24($t0) 
+    li $t1 0xffffff
+    sw $t1 28($t0) 
     
     # L rotation 1
     lw $t0 ADDR_TET_SPRITE
-    addi $t0 $t0 32 # offset memory
+    addi $t0 $t0 64 # offset memory
     li $t1 0x000000
     sw $t1 0($t0) 
     addi $t1 $zero 4
@@ -308,11 +358,19 @@ store_tetromino_sprites:
     addi $t1 $zero -64
     sw $t1 12($t0) 
     li $t1 0xffffff
-    sw $t1 16($t0) 
+    sw $t1 16($t0)
+    li $t1 64
+    sw $t1 20($t0) 
+    li $t1 68
+    sw $t1 24($t0) 
+    li $t1 72
+    sw $t1 28($t0) 
+    li $t1 0xffffff
+    sw $t1 32($t0) 
     
     # L rotation 2
     lw $t0 ADDR_TET_SPRITE
-    addi $t0 $t0 64 #offset memory
+    addi $t0 $t0 128 #offset memory
     li $t1 0x000000
     sw $t1 0($t0) 
     addi $t1 $zero -64
@@ -322,11 +380,17 @@ store_tetromino_sprites:
     addi $t1 $zero -4
     sw $t1 12($t0) 
     li $t1 0xffffff
-    sw $t1 16($t0) 
+    sw $t1 16($t0)
+    li $t1 64
+    sw $t1 20($t0) 
+    li $t1 -68
+    sw $t1 24($t0)
+    li $t1 0xffffff
+    sw $t1 28($t0)
     
     # L rotation 3
     lw $t0 ADDR_TET_SPRITE
-    addi $t0 $t0 96
+    addi $t0 $t0 192
     li $t1 0x000000
     sw $t1 0($t0) 
     addi $t1 $zero -4
@@ -337,5 +401,159 @@ store_tetromino_sprites:
     sw $t1 12($t0) 
     li $t1 0xffffff
     sw $t1 16($t0) 
+    li $t1 60
+    sw $t1 20($t0) 
+    li $t1 64
+    sw $t1 24($t0) 
+    li $t1 120
+    sw $t1 28($t0) 
+    li $t1 0xffffff
+    sw $t1 32($t0) 
     jr $ra
+    
+############################
+# Collision detection
+# sets $v0 to 0 if no collision and 1 if collision
+# $a0 = new location
+# $a1 = new orientation
+check_collision:
+    lw $t2 ADDR_TET_SPRITE
+    lw $t3 ADDR_TET_ORI
+    add $t4 $zero $zero # current orientation
+    
+     # get memory location of correct orientation
+    get_sprite_location_col:
+        beq $t4 $a1 check_sprite_col
+        addi $t2 $t2 64
+        addi $t4 $t4 1
+        bne $t4 $a1 get_sprite_location_col
+        beq $t4 $a1 check_sprite_col
+    
+    check_sprite_col:
+        lw $t5 0($t2)   # get value to move pointer
+    check_sprite_col_loop:
+        add $a0 $a0 $t5 # add value to current pointer location
+        lw $t1 0($a0) # get current pixel value
+        beq $t1 0xffffff col_detected
+        lw $t5 0($t2)   # get value to move brush
+        addi $t2 $t2 4
+        bne $t5 0xffffff check_sprite_col_loop
+        addi $v0 $zero 0
+        jr $ra
+   col_detected: 
+        addi $v0 $zero 1
+        jr $ra
+
+# sets $v0 to 0 if not touching and 1 if touching
+check_bottom_touching:
+    lw $t2 ADDR_TET_SPRITE
+    lw $t3 ADDR_TET_ORI
+    add $t4 $zero $zero # current orientation
+    
+     # get memory location of correct orientation
+    get_sprite_location_touch:
+        beq $t4 $t3 get_sprite_lowest
+        addi $t2 $t2 64
+        addi $t4 $t4 1
+        bne $t4 $t3 get_sprite_location_touch
+        beq $t4 $t3 get_sprite_lowest
+    get_sprite_lowest:  # go to next location until end pointer of sprite
+        addi $t2 $t2 4
+        lw $t0 0($t2)
+        bne $t0 0xffffff get_sprite_lowest
+        
+    check_sprite_touch:
+        addi $t2 $t2 4
+        lw $t5 0($t2)   # load location of lowest point pixel
+        beq $t5 0xffffff no_touch
+        add $t0 $a0 $t5 # location of lowest point on bitmap
+        lw $t5 0($t0)   # check colour at location of lowest point
+        beq $t5 0x555555 check_sprite_touch   # no touch, go to next lowest point
+        beq $t5 0x0000000 check_sprite_touch
+        addi $v0 $zero 1
+        jr $ra
+    no_touch:
+        add $v0 $zero $zero
+        jr $ra
+    
+##########################################
+# place tetronominoes
+# store tetronomino locations in ADDR_TET_BOARD
+# $a0 has current tetronomino location
+place_tetronomino:
+    lw $t0 ADDR_TET_BOARD
+    lw $t2 ADDR_TET_SPRITE
+    lw $t3 ADDR_TET_ORI
+    lw $t6 ADDR_TET
+    li $t1 0x87CEFA # colour
+    addi $t0 $a0 0x00010000
+
+    
+    # get memory location of correct orientation
+    add $t4 $zero $zero
+    get_sprite_location_store:
+        beq $t4 $t3 sprite_store
+        addi $t2 $t2 64
+        addi $t4 $t4 1
+        bne $t4 $t3 get_sprite_location_store
+        beq $t4 $t3 sprite_store
+        
+    sprite_store:
+        lw $t5 0($t2)   # get value to move pointer
+    sprite_store_loop:
+        add $t0 $t0 $t5 # add value to current pointer location
+        sw $t1 0($t0)   # store colour at offset location
+        addi $t2 $t2 4    # next sprite pointer
+        lw $t5 0($t2)   # get value to move brush
+        bne $t5 0xffffff sprite_store_loop            
+        jr $ra
+    
+place_stored_tetrominoes:
+    lw $t0 ADDR_TET_BOARD # pointer
+    lw $t7 ADDR_TET_BOARD # starting point
+    li $t1 0  # initialize row counter (up to 16)
+    li $t2 0   # initialize column counter (up to 32)
+    li $t3 0x87CEFA # colour
+    lw $t4 ADDR_DSPL_TOP
+    
+    
+    place_stored_column_loop:
+        beq $t2 32 exit_place_stored
+        addi $t2 $t2 1
+        add $t7 $t7 64
+        add $t0 $zero $t7
+        
+        li $t1 0 
+        place_stored_row_loop:
+            beq $t1 16 place_stored_column_loop
+            addi $t1 $t1 1
+            add $t0 $t0 4
+            lw $t5 0($t0)
+            bne $t5 0x87CEFA place_stored_row_loop
+            addi $t5 $t0 -65536
+            sw $t3 0($t5) 
+            b place_stored_row_loop
+        
+    exit_place_stored:
+        jr $ra
+    
+reset_position:
+    lw $t1 ADDR_TET
+    addi $t1 $zero 0x1000819C
+    sw $t1 ADDR_TET
+    jr $ra 
+     
+#########################
+# CLEARING LINES
+# clear_lines:
+    # lw $t0 ADDR_TET_BOARD
+    # li $t1 12    # counter row
+    # li $t2 256    # counter column
+    
+    # clear_stored_columns:
+        
+        
+    # exit_clear_stored:
+        # jr $ra
+    
     
