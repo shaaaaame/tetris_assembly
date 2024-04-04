@@ -1,7 +1,7 @@
 ################ CSC258H1F Winter 2024 Assembly Final Project ##################
 # This file contains our implementation of Tetris.
 #
-# Student 1: Name, Student Number
+# Student 1: Han Xheng Chew, 1009562340
 # Student 2: Name, Student Number (if applicable)
 ######################## Bitmap Display Configuration ########################
 # - Unit width in pixels:       128
@@ -426,6 +426,18 @@ respond_to_R:
     sw $t0 CURR_SPEED
     li $t0 0x1000819C
     sw $t0 ADDR_TET
+    
+    li $a0 1484
+    jal fill_random_rows
+    li $a0 1548
+    jal fill_random_rows
+    li $a0 1612
+    jal fill_random_rows
+    li $a0 1676
+    jal fill_random_rows
+    li $a0 1740
+    jal fill_random_rows
+    
     b game_loop
     
     
@@ -453,9 +465,11 @@ check_collision:
         add $a0 $a0 $t5 # add value to current pointer location
         lw $t1 0($a0) # get current pixel value
         beq $t1 0xffffff col_detected
+        beq $t1 0x87cefa col_detected
         lw $t5 0($t2)   # get value to move brush
         addi $t2 $t2 4
         bne $t5 0xffffff check_sprite_col_loop
+        beq $t5 0x87cefa check_sprite_col_loop
         addi $v0 $zero 0
         jr $ra
    col_detected: 
