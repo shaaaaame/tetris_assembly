@@ -51,6 +51,9 @@ ADDR_TET_SPRITE:
 # values can be 0 to 3.
 ADDR_TET_ORI:
     .word 0x30000000
+    
+COUNT:
+    .word 0
 ##############################################################################
 # Code
 ##############################################################################
@@ -62,6 +65,7 @@ ADDR_TET_ORI:
 
 	# Run the Tetris game.
 main:
+
     # Initialize the game
     jal m_draw_scene
     
@@ -79,6 +83,13 @@ main:
 
 
 game_loop:	
+    # update count. if count reaches 10, move tetromino down.
+    lw $t0 COUNT
+    addi $t0 $t0 1
+    beq $t0 10 respond_to_S
+    sw $t0 COUNT
+    
+
 	# 1a. Check if key has been pressed
 	lw $t0, ADDR_KBRD               # $t0 = base address for keyboard
     lw $t8, 0($t0)                  # Load first word from keyboard
@@ -97,10 +108,11 @@ game_loop:
     jal m_draw_tetromino
     
     jal place_stored_tetrominoes
+    jal clear_lines
     
 	# 4. Sleep
     li 		$v0, 32
-	li 		$a0, 1
+	li 		$a0, 100
 	syscall
     #5. Go back to 1
     b game_loop
@@ -275,6 +287,7 @@ respond_to_A:
     b game_loop       # return to game loop
 
 respond_to_S:
+    sw $zero COUNT
     lw $t1 ADDR_TET
     addi $a0 $t1 64    # run collision check
     lw $a1 ADDR_TET_ORI
@@ -545,15 +558,68 @@ reset_position:
      
 #########################
 # CLEARING LINES
-# clear_lines:
-    # lw $t0 ADDR_TET_BOARD
-    # li $t1 12    # counter row
-    # li $t2 256    # counter column
+clear_lines:
+    lw $t0 ADDR_TET_BOARD   
+    lw $t1 ADDR_DSPL_TOP    # set memory pointer
+    addi $t1 $t1 65536
+    lw $t6 0($t1)   # colour pointer
+    li $t2 0    # row counter, multiple of 4
+    li $t3 0    # column counter, multiple of 64
+    li $t4 0    # filled pixel counter
     
-    # clear_stored_columns:
-        
-        
-    # exit_clear_stored:
-        # jr $ra
+    check_line:
+        bne $t6 0x87CEFA check_next_line
+        count_filled_pixel:
+            addi $t4 $t4 1
+        check_next_pixel:
+            addi $t2 $t2 4
+            addi $t1 $t1 4    # move pointer
+            lw $t6 0($t1)
+            beq $t4 10 clear_line
+            bne $t4 10 check_line
+        clear_line:
+            lw $t1 ADDR_DSPL_TOP
+            addi $t1 $t1 65536
+            li $t2 0    # row counter, up to 10
+            li $t4 0
+            add $t1 $t1 $t3
+            clear_line_loop:
+                sw $t4 0($t1)
+                addi $t1 $t1 4
+                addi $t2 $t2 1
+                beq $t2 10 bring_lines_down
+                bne $t2 10 clear_line_loop
+        check_next_line:
+            addi $t3 $t3 64    # column counter, multiple of 64
+            lw $t1 ADDR_DSPL_TOP
+            addi $t1 $t1 65536
+            add $t1 $t1 $t3
+            lw $t6 0($t1)
+            li $t2 0    # row counter, multiple of 4
+            
+            li $t4 0    # filled pixel counter
+            bne $t3 1536 check_line
+            beq $t3 1536 exit_clear_stored
+        bring_lines_down:
+            lw $t1 ADDR_DSPL_TOP
+            addi $t1 $t1 65536  
+            li $t4 0    # row counter, up to 10
+            add $t1 $t1 $t3 # current memory pointer of cleared row
+            add $t2 $t1 $zero  # memory pointer of row to move to
+            addi $t1 $t1 -64    # memory pointer of row to move from
+            bring_lines_down_loop:
+                lw $t5 0($t1)   
+                sw $t5 0($t2)   # bring down line
+                addi $t4 $t4 1
+                addi $t1 $t1 4
+                addi $t2 $t2 4
+                beq $t4 10 bring_down_next_line
+                bne $t4 10 bring_lines_down_loop
+            bring_down_next_line:
+                addi $t3 $t3 -64
+                beq $t3 -64 exit_clear_stored
+                bne $t3 -64 bring_lines_down
+    exit_clear_stored:
+        jr $ra
     
     
